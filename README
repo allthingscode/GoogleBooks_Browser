@@ -1,0 +1,23 @@
+
+= Google Books Browser =
+
+- GIT Apology -
+This is my first experience with git, so forgive me if I'm doing things all wrong.
+
+
+
+- Purpose -
+Provide a PHP API that can be used to add google books to bookshelf - given the books title and author.
+
+
+
+
+- Install -
+All of the files are meant to live in a directory call "GoogleBooks".
+Create this directory somewhere in the php include path, and then add all the files.
+
+
+
+- Dependancies -
+Zend_Gdata Library (http://code.google.com/apis/gdata/docs/client-libraries.html)
+
