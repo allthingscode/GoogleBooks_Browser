@@ -1,6 +1,7 @@
 <?php
 require_once 'Zend/Gdata/Books.php';
 require_once 'Zend/Gdata/ClientLogin.php';
+require_once 'Exception/BookNotFound.php';
 
 /**
  * Rerence:  http://garykac.blogspot.com/2010/06/using-google-books-api.html
@@ -159,23 +160,36 @@ final class GoogleBooks_Browser
     public function findGoogleBook( $title, $author )
     {
         $gdataQueryString = $this->_createGoogleBookSearchQuery( $title, $author );
+        //$gdataQueryString = 'Atlas Shrugged';
+        //echo "\ngdataQueryString:  {$gdataQueryString}\n";
 
         $gBooks = new Zend_Gdata_Books();
         $gVolumeQuery = $gBooks->newVolumeQuery();
         $gVolumeQuery->setQuery( $gdataQueryString );
-        $gVolumeQuery->setMinViewability('partial_view');
         $gFeed = $gBooks->getVolumeFeed( $gVolumeQuery );
         //var_dump( $gFeed );
 
         // If don't find any matches, then we're all done here
         if ( $gFeed->count() < 1 ) {
-            throw new Exception( 'No matching google books found' );
+            throw new Exception_BookNotFound(
+                'No matching google books found for ' .
+                'title: '  . $title   . ', ' .
+                'author: ' . $author
+                );
         }
 
         // Assume the first match is the most correct
         $gFeed->rewind();
         $firstFeedEntry = $gFeed->current();
         //var_dump( $firstFeedEntry );
+
+        /*
+        echo "\nFound these books:\n";
+        foreach ( $gFeed as $gEntry  ) {
+            echo implode( '|', $gEntry->getTitles() ) . '; ' . $gEntry->getVolumeId() . "\n" ;
+        }
+        return '';
+        */
 
         return $firstFeedEntry->getVolumeId();
     }
@@ -193,8 +207,20 @@ final class GoogleBooks_Browser
             $this->signIn();
         }
 
-        // @TODO Get a list of books on the given bookshelf, 
-        //       and then determine if the given book is in the list.
+        $bookshelfUri = 'http://books.google.com/books/feeds/users/me/collections/' . $bookshelfVolumeId . '/volumes';
+
+        $gBooks = $this->_getZendGdataBooks();
+        $gFeed = $gBooks->getVolumeFeed( $bookshelfUri );       
+
+        foreach ( $gFeed as $gEntry  ) {
+            if ( $gEntry->getVolumeId() === $bookVolumeId ) {
+                // We found a match, so return TRUE
+                return true;
+            }
+        }
+
+        // No match was found
+        return false;
     }
 
 
@@ -203,14 +229,20 @@ final class GoogleBooks_Browser
      * @param string
      * @params string
      */
-    public function addBookToBookShelf( $bookVolumeId, $bookshelfVolumeId )
+    public function addBookToBookShelf( $bookshelfVolumeId, $bookVolumeId )
     {
         // Make sure we're signed in
         if ( false === $this->isSignedIn() ) {
             $this->signIn();
         }
+        
+        $bookshelfUri = 'http://books.google.com/books/feeds/users/me/collections/' . $bookshelfVolumeId . '/volumes';
 
-        // @TODO 
+        $gNewBookshelfEntry = new Zend_Gdata_Books_VolumeEntry();
+        $gNewBookshelfEntry->setId( new Zend_Gdata_App_Extension_Id( $bookVolumeId ) );
+
+        $gBooks = $this->_getZendGdataBooks();
+        $gBooks->insertVolume( $gNewBookshelfEntry, $bookshelfUri );
     }
     // ------------------------------------------------------------------------
 
