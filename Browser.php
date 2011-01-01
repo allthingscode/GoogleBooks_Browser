@@ -124,6 +124,15 @@ final class GoogleBooks_Browser
     {
         return $this->_properties['ZendGdataBooks'];
     }
+    /**
+     * @return bool
+     */
+    private function _hasZendGdataBooks()
+    {
+        $hasZendGdataBooks = ( true === is_null( $this->_properties['ZendGdataBooks'] ) );
+        return $hasZendGdataBooks;
+    }
+
     // ------------------------------------------------------------------------
 
 
@@ -163,9 +172,17 @@ final class GoogleBooks_Browser
         //$gdataQueryString = 'Atlas Shrugged';
         //echo "\ngdataQueryString:  {$gdataQueryString}\n";
 
-        $gBooks = new Zend_Gdata_Books();
+        // If we're signed-in, use the current session;
+        //   otherwise, start a new temporary session just for this search.
+        if ( true === $this->_hasZendGdataBooks() ) {
+            $gBooks = $this->_getZendGdataBooks();
+        } else {
+            $gBooks = new Zend_Gdata_Books();   
+        }
+
         $gVolumeQuery = $gBooks->newVolumeQuery();
         $gVolumeQuery->setQuery( $gdataQueryString );
+        $gVolumeQuery->setMaxResults( 1 );
         $gFeed = $gBooks->getVolumeFeed( $gVolumeQuery );
         //var_dump( $gFeed );
 
@@ -210,7 +227,7 @@ final class GoogleBooks_Browser
         $bookshelfUri = 'http://books.google.com/books/feeds/users/me/collections/' . $bookshelfVolumeId . '/volumes';
 
         $gBooks = $this->_getZendGdataBooks();
-        $gFeed = $gBooks->getVolumeFeed( $bookshelfUri );       
+        $gFeed = $gBooks->getVolumeFeed( $bookshelfUri );
 
         foreach ( $gFeed as $gEntry  ) {
             if ( $gEntry->getVolumeId() === $bookVolumeId ) {
@@ -235,7 +252,7 @@ final class GoogleBooks_Browser
         if ( false === $this->isSignedIn() ) {
             $this->signIn();
         }
-        
+
         $bookshelfUri = 'http://books.google.com/books/feeds/users/me/collections/' . $bookshelfVolumeId . '/volumes';
 
         $gNewBookshelfEntry = new Zend_Gdata_Books_VolumeEntry();
@@ -259,11 +276,11 @@ final class GoogleBooks_Browser
     private function _createGoogleBookSearchQuery( $title, $author = '' )
     {
         $title = preg_replace( '/\s+/', ' ', trim( $title ) );
-        $title = preg_replace( '/[^A-Z0-9 ]/i', '', $title );
+        $title = preg_replace( '/[^A-Z0-9= ]/i', '', $title );
         $titleQuery  = 'intitle:' . str_replace( ' ', ' intitle:', $title );
 
         $author = preg_replace( '/\s+/', ' ', trim( $author ) );
-        $author = preg_replace( '/[^A-Z0-9 ]/i', '', $author );
+        $author = preg_replace( '/[^A-Z0-9= ]/i', '', $author );
         $authorQuery = 'inauthor:' . str_replace( ' ', ' inauthor:', $author );
 
         $totalQuery = trim( $titleQuery . ' ' . $authorQuery );
