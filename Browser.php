@@ -30,6 +30,9 @@ final class GoogleBooks_Browser
     {
         // Default the IsSignedInFlag value
         $this->_setIsSignedInFlag( false );
+
+        // Default to at least 2 seconds between google api requests.
+        $this->_setMinDelayBetweenRequests( 1 );
     }
 
 
@@ -133,6 +136,45 @@ final class GoogleBooks_Browser
         return $hasZendGdataBooks;
     }
 
+
+    /**
+     * @param int
+     */
+    private function _setMinDelayBetweenRequests( $newValue )
+    {
+        $this->_properties['MinDelayBetweenRequests'] = $newValue;
+    }
+    /**
+     * @return int
+     */
+    private function _getMinDelayBetweenRequests()
+    {
+        return $this->_properties['MinDelayBetweenRequests'];
+    }
+
+
+    /**
+     * @param int
+     */
+    private function _setLastRequestTime( $newValue )
+    {
+        $this->_properties['LastRequestTime'] = $newValue;
+    }
+    /**
+     * @return int
+     */
+    private function _getLastRequestTime()
+    {
+        return $this->_properties['LastRequestTime'];
+    }
+    /**
+     * @return bool
+     */
+    private function _hasLastRequestTime()
+    {
+        $hasLastRequestTime = ( true === array_key_exists( 'LastRequestTime', $this->_properties ) );
+        return $hasLastRequestTime;
+    }
     // ------------------------------------------------------------------------
 
 
@@ -164,27 +206,34 @@ final class GoogleBooks_Browser
     /**
      * @param string
      * @param string
-     * @return array
+     * @return Zend_Gdata_Books_VolumeEntry
      */
     public function findGoogleBook( $title, $author )
     {
+        static $foundGoogleBooks = array();
+
         $gdataQueryString = $this->_createGoogleBookSearchQuery( $title, $author );
-        //$gdataQueryString = 'Atlas Shrugged';
-        //echo "\ngdataQueryString:  {$gdataQueryString}\n";
+
+        // Prevent searching for the same book more than once.
+        if ( true === array_key_exists( $gdataQueryString, $foundGoogleBooks ) ) {
+            return $foundGoogleBooks[ $gdataQueryString ];
+        }
+
+        $this->_throttle();
 
         // If we're signed-in, use the current session;
         //   otherwise, start a new temporary session just for this search.
         if ( true === $this->_hasZendGdataBooks() ) {
             $gBooks = $this->_getZendGdataBooks();
         } else {
-            $gBooks = new Zend_Gdata_Books();   
+            $gBooks = new Zend_Gdata_Books();
         }
 
         $gVolumeQuery = $gBooks->newVolumeQuery();
         $gVolumeQuery->setQuery( $gdataQueryString );
         $gVolumeQuery->setMaxResults( 1 );
         $gFeed = $gBooks->getVolumeFeed( $gVolumeQuery );
-        //var_dump( $gFeed );
+        $this->_setLastRequestTime( time() );
 
         // If don't find any matches, then we're all done here
         if ( $gFeed->count() < 1 ) {
@@ -198,56 +247,30 @@ final class GoogleBooks_Browser
         // Assume the first match is the most correct
         $gFeed->rewind();
         $firstFeedEntry = $gFeed->current();
-        //var_dump( $firstFeedEntry );
 
-        /*
-        echo "\nFound these books:\n";
-        foreach ( $gFeed as $gEntry  ) {
-            echo implode( '|', $gEntry->getTitles() ) . '; ' . $gEntry->getVolumeId() . "\n" ;
-        }
-        return '';
-        */
+        // Save this search result so we don't have to do it again.
+        $foundGoogleBooks[ $gdataQueryString ] = $firstFeedEntry;
 
-        return $firstFeedEntry->getVolumeId();
-    }
-
-
-    /**
-     * @param string
-     * @param string
-     * @return bool
-     */
-    public function isBookOnBookshelf( $bookshelfVolumeId, $bookVolumeId )
-    {
-        // Make sure we're signed in
-        if ( false === $this->isSignedIn() ) {
-            $this->signIn();
-        }
-
-        $bookshelfUri = 'http://books.google.com/books/feeds/users/me/collections/' . $bookshelfVolumeId . '/volumes';
-
-        $gBooks = $this->_getZendGdataBooks();
-        $gFeed = $gBooks->getVolumeFeed( $bookshelfUri );
-
-        foreach ( $gFeed as $gEntry  ) {
-            if ( $gEntry->getVolumeId() === $bookVolumeId ) {
-                // We found a match, so return TRUE
-                return true;
-            }
-        }
-
-        // No match was found
-        return false;
+        return $firstFeedEntry;
     }
 
 
     /**
      * NOTE: To get a list of bookshelfes:  http://books.google.com/books/feeds/users/me/collections
+     * If the book is already on the bookshelf, then nothing really changes.
      * @param string
      * @params string
      */
     public function addBookToBookShelf( $bookshelfVolumeId, $bookVolumeId )
     {
+        static $addedBooks = array();
+
+        // Prevent adding the same book more than once
+        $paramKey = $bookshelfVolumeId . '|' . $bookVolumeId;
+        if ( true === array_key_exists( $paramKey, $addedBooks ) ) {
+            return;
+        }
+
         // Make sure we're signed in
         if ( false === $this->isSignedIn() ) {
             $this->signIn();
@@ -260,6 +283,8 @@ final class GoogleBooks_Browser
 
         $gBooks = $this->_getZendGdataBooks();
         $gBooks->insertVolume( $gNewBookshelfEntry, $bookshelfUri );
+
+        $addedBooks[ $paramKey ] = true;
     }
     // ------------------------------------------------------------------------
 
@@ -276,7 +301,9 @@ final class GoogleBooks_Browser
     private function _createGoogleBookSearchQuery( $title, $author = '' )
     {
         $title = preg_replace( '/\s+/', ' ', trim( $title ) );
-        $title = preg_replace( '/[^A-Z0-9= ]/i', '', $title );
+        $title = str_ireplace( array( '(The Audiobook)', '(Live)', '(Unabridged)' ), '', $title );
+        $title = preg_replace( '/Part [0-9]+/i', '', $title );
+        $title = preg_replace( '/[^A-Z0-9=\' ]/i', '', $title );
         $titleQuery  = 'intitle:' . str_replace( ' ', ' intitle:', $title );
 
         $author = preg_replace( '/\s+/', ' ', trim( $author ) );
@@ -290,6 +317,22 @@ final class GoogleBooks_Browser
     }
 
 
+    /**
+     *
+     */
+    private function _throttle()
+    {
+        // If we haven't submitted any requests yet, then no need to delay.
+        if ( false === $this->_hasLastRequestTime() ) {
+            return;
+        }
 
+        // Stall as long as required
+        $delayTime = ( time() - $this->_getLastRequestTime() );
+        while ( $delayTime < $this->_getMinDelayBetweenRequests() ) {
+            sleep( 1 );
+            $delayTime = ( time() - $this->_getLastRequestTime() );
+        }
+    }
     // ------------------------------------------------------------------------
 }
