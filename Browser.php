@@ -198,9 +198,60 @@ final class GoogleBooks_Browser
         $googleBooks  = new Zend_Gdata_Books( $googleClient );
         $this->_setZendGdataBooks( $googleBooks );
 
-        // Ladies and gentlemen, we are now signed into Audible.com.
         $this->_setIsSignedInFlag( true );
     }
+
+
+    /**
+     * You would think that the API would support loading a volume by volumeId,
+     *   but no.  ISBN numbers are the next-best thing.
+     * @param array ISBN Numbers corresponding to the volume
+     * @return Zend_Gdata_Books_VolumeEntry
+     */
+    public function loadGoogleBook( array $isbns )
+    {
+        //static $foundGoogleBooks = array();
+
+        $gdataQueryString = "isbn:" . implode( ' isbn:', $isbns );
+
+        // Prevent searching for the same book more than once.
+        if ( true === array_key_exists( $gdataQueryString, $foundGoogleBooks ) ) {
+            return $foundGoogleBooks[ $gdataQueryString ];
+        }
+
+        $this->_throttle();
+
+        // If we're signed-in, use the current session;
+        //   otherwise, start a new temporary session just for this search.
+        if ( true === $this->_hasZendGdataBooks() ) {
+            $gBooks = $this->_getZendGdataBooks();
+        } else {
+            $gBooks = new Zend_Gdata_Books();
+        }
+
+        $gVolumeQuery = $gBooks->newVolumeQuery();
+        $gVolumeQuery->setQuery( $gdataQueryString );
+        $gVolumeQuery->setMaxResults( 1 );
+        $gFeed = $gBooks->getVolumeFeed( $gVolumeQuery );
+        $this->_setLastRequestTime( time() );
+
+        // If don't find any matches, then we're all done here
+        if ( $gFeed->count() < 1 ) {
+            $errorMessage = 'No matching google books found';
+            //$errorMessage .= "\n" . 'Using: ' . $gdataQueryString;
+            throw new Exception_BookNotFound( $errorMessage );
+        }
+
+        // Assume the first match is the most correct
+        $gFeed->rewind();
+        $firstFeedEntry = $gFeed->current();
+
+        // Save this search result so we don't have to do it again.
+        //$foundGoogleBooks[ $gdataQueryString ] = $firstFeedEntry;
+
+        return $firstFeedEntry;
+    }
+
 
 
     /**
@@ -257,49 +308,15 @@ final class GoogleBooks_Browser
 
 
     /**
-     * Google does not support searching by volumeId,
-     *   so we will search by ISBN and check if any of the first 10 result entries
-     *   have the same volumeId.
      * @param string
-     * @param Zend_Gdata_Books_VolumeEntry
+     * @param string
      * @return bool
      */
-    public function isBookOnBookShelf( $bookshelfVolumeId, Zend_Gdata_Books_VolumeEntry $bookVolumeEntry )
+    public function isBookOnBookShelf( $bookshelfVolumeId, $exactTitle )
     {
-        static $checkedBooks = array();
-
-        $isbns = $this->_getIsbns( $bookVolumeEntry );
-        $gdataQueryString = "isbn:" . implode( ' isbn:', $isbns );
-
-        // See if we already know this book is on the bookshelf
-        $checkedBooksKey = $gdataQueryString . '|' . $bookshelfVolumeId;
-        if ( true === array_key_exists( $checkedBooksKey, $checkedBooks ) ) {
-            return $checkedBooks[ $checkedBooksKey ];
-        }
-
         $gBooks = $this->_getZendGdataBooks();
 
-        $bookshelfUri = 'http://books.google.com/books/feeds/users/me/collections/' . $bookshelfVolumeId . '/volumes';
-
-        $gVolumeQuery = $gBooks->newVolumeQuery( $bookshelfUri );
-        $gVolumeQuery->setQuery( $gdataQueryString );
-        $gVolumeQuery->setMaxResults( 10 );
-        $gFeed = $gBooks->getVolumeFeed( $gVolumeQuery );
-
-        // If we don't find any matches, then we're all done here
-        if ( $gFeed->count() < 1 ) {
-            return false;
-        }
-
-        // Iterate the search results
-        foreach ( $gFeed as $gEntry ) {
-            if ( $gEntry->getVolumeId() === $bookVolumeEntry->getVolumeId() ) {
-                $checkedBooks[ $checkedBooksKey ] = true;
-                return true;
-            }
-        }
-
-        return false;
+        // @TODO
     }
 
 
@@ -364,26 +381,6 @@ final class GoogleBooks_Browser
         $totalQuery = str_replace( ' ', '+', $totalQuery );
 
         return $totalQuery;
-    }
-
-
-    /**
-     * @param
-     * @return array
-     */
-    private function _getIsbns( Zend_Gdata_Books_VolumeEntry $bookVolumeEntry )
-    {
-        $isbns = array();
-
-        foreach ( $bookVolumeEntry->getIdentifiers() as $identifier ) {
-            $identifierString = $identifier->getText();
-            if ( 'ISBN:' === substr( strtoupper( $identifierString ), 0, 5 ) ) {
-                $isbnPieces = explode( ':', $identifierString, 2 );
-                $isbns[] = $isbnPieces[1];
-            }
-        }
-
-        return $isbns;
     }
 
 
