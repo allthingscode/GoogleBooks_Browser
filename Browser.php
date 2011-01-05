@@ -4,8 +4,8 @@ require_once 'Zend/Gdata/ClientLogin.php';
 require_once 'Exception/BookNotFound.php';
 
 /**
- * Rerence:  http://garykac.blogspot.com/2010/06/using-google-books-api.html
- *           http://framework.zend.com/manual/en/zend.gdata.books.html
+ * Reference:  http://garykac.blogspot.com/2010/06/using-google-books-api.html
+ *             http://framework.zend.com/manual/en/zend.gdata.books.html
  *
  * @package GoogleBooks
  * @author Matthew Hayes <Matthew.Hayes@AllThingsCode.com>
@@ -203,55 +203,38 @@ final class GoogleBooks_Browser
 
 
     /**
-     * You would think that the API would support loading a volume by volumeId,
-     *   but no.  ISBN numbers are the next-best thing.
-     * @param array ISBN Numbers corresponding to the volume
-     * @return Zend_Gdata_Books_VolumeEntry
+     * @param string
+     * @param Zend_Gdata_Books_VolumeEntry
+     * @return bool
      */
-    public function loadGoogleBook( array $isbns )
+    public function isBookOnBookshelf( $bookshelfVolumeId, Zend_Gdata_Books_VolumeEntry $bookVolumeEntry )
     {
-        //static $foundGoogleBooks = array();
-
-        $gdataQueryString = "isbn:" . implode( ' isbn:', $isbns );
-
-        // Prevent searching for the same book more than once.
-        if ( true === array_key_exists( $gdataQueryString, $foundGoogleBooks ) ) {
-            return $foundGoogleBooks[ $gdataQueryString ];
+        // Make sure we're signed in
+        if ( false === $this->isSignedIn() ) {
+            $this->signIn();
         }
 
-        $this->_throttle();
+        static $booksFoundOnBookshelf = array();
 
-        // If we're signed-in, use the current session;
-        //   otherwise, start a new temporary session just for this search.
-        if ( true === $this->_hasZendGdataBooks() ) {
-            $gBooks = $this->_getZendGdataBooks();
-        } else {
-            $gBooks = new Zend_Gdata_Books();
+        $gdataQueryString = $this->_createExactGoogleBookSearchQuery( $bookVolumeEntry );
+
+        // See if we already know that it's on our bookshelf
+        if ( true === in_array( $gdataQueryString, $booksFoundOnBookshelf ) ) {
+            return true;
         }
 
-        $gVolumeQuery = $gBooks->newVolumeQuery();
-        $gVolumeQuery->setQuery( $gdataQueryString );
-        $gVolumeQuery->setMaxResults( 1 );
-        $gFeed = $gBooks->getVolumeFeed( $gVolumeQuery );
-        $this->_setLastRequestTime( time() );
-
-        // If don't find any matches, then we're all done here
-        if ( $gFeed->count() < 1 ) {
-            $errorMessage = 'No matching google books found';
-            //$errorMessage .= "\n" . 'Using: ' . $gdataQueryString;
-            throw new Exception_BookNotFound( $errorMessage );
+        try {
+            $firstFeedEntry = $this->_getFirstMatch( $gdataQueryString, $bookshelfVolumeId );
+        } catch ( Exception_BookNotFound $exception ) {
+            //echo "\n" . __FUNCTION__ . "()\t" . $exception->getMessage();
+            return false;
         }
 
-        // Assume the first match is the most correct
-        $gFeed->rewind();
-        $firstFeedEntry = $gFeed->current();
+        // Save the fact that the book is already on our bookshelf
+        $booksFoundOnBookshelf[] = $gdataQueryString;
 
-        // Save this search result so we don't have to do it again.
-        //$foundGoogleBooks[ $gdataQueryString ] = $firstFeedEntry;
-
-        return $firstFeedEntry;
+        return true;
     }
-
 
 
     /**
@@ -261,63 +244,19 @@ final class GoogleBooks_Browser
      */
     public function findGoogleBook( $title, $author )
     {
-        static $foundGoogleBooks = array();
+        // Make sure we're signed in
+        if ( false === $this->isSignedIn() ) {
+            $this->signIn();
+        }
 
         $gdataQueryString = $this->_createGoogleBookSearchQuery( $title, $author );
 
-        // Prevent searching for the same book more than once.
-        if ( true === array_key_exists( $gdataQueryString, $foundGoogleBooks ) ) {
-            return $foundGoogleBooks[ $gdataQueryString ];
-        }
-
-        $this->_throttle();
-
-        // If we're signed-in, use the current session;
-        //   otherwise, start a new temporary session just for this search.
-        if ( true === $this->_hasZendGdataBooks() ) {
-            $gBooks = $this->_getZendGdataBooks();
-        } else {
-            $gBooks = new Zend_Gdata_Books();
-        }
-
-        $gVolumeQuery = $gBooks->newVolumeQuery();
-        $gVolumeQuery->setQuery( $gdataQueryString );
-        $gVolumeQuery->setMaxResults( 1 );
-        $gFeed = $gBooks->getVolumeFeed( $gVolumeQuery );
-        $this->_setLastRequestTime( time() );
-
-        // If don't find any matches, then we're all done here
-        if ( $gFeed->count() < 1 ) {
-            $errorMessage =
-                'No matching google books found for ' .
-                'title: '  . $title  . ', ' .
-                'author: ' . $author;
-            //$errorMessage .= "\n" . 'Using: ' . $gdataQueryString;
-            throw new Exception_BookNotFound( $errorMessage );
-        }
-
-        // Assume the first match is the most correct
-        $gFeed->rewind();
-        $firstFeedEntry = $gFeed->current();
-
-        // Save this search result so we don't have to do it again.
-        $foundGoogleBooks[ $gdataQueryString ] = $firstFeedEntry;
+        $firstFeedEntry = $this->_getFirstMatch( $gdataQueryString );
 
         return $firstFeedEntry;
     }
 
 
-    /**
-     * @param string
-     * @param string
-     * @return bool
-     */
-    public function isBookOnBookShelf( $bookshelfVolumeId, $exactTitle )
-    {
-        $gBooks = $this->_getZendGdataBooks();
-
-        // @TODO
-    }
 
 
     /**
@@ -327,17 +266,17 @@ final class GoogleBooks_Browser
      */
     public function addBookToBookShelf( $bookshelfVolumeId, $bookVolumeId )
     {
+        // Make sure we're signed in
+        if ( false === $this->isSignedIn() ) {
+            $this->signIn();
+        }
+
         static $addedBooks = array();
 
         // Prevent adding the same book more than once
         $paramKey = $bookshelfVolumeId . '|' . $bookVolumeId;
         if ( true === array_key_exists( $paramKey, $addedBooks ) ) {
             return;
-        }
-
-        // Make sure we're signed in
-        if ( false === $this->isSignedIn() ) {
-            $this->signIn();
         }
 
         $bookshelfUri = 'http://books.google.com/books/feeds/users/me/collections/' . $bookshelfVolumeId . '/volumes';
@@ -357,12 +296,51 @@ final class GoogleBooks_Browser
 
     // ----- Private Methods --------------------------------------------------
 
+
+
+    /**
+     * @param string
+     * @param string
+     * @return Zend_Gdata_Books_VolumeEntry
+     */
+    private function _getFirstMatch( $gdataQueryString, $bookshelfVolumeId = null )
+    {
+        $this->_throttle();
+
+        $gBooks = $this->_getZendGdataBooks();
+
+        if ( true === is_null( $bookshelfVolumeId ) ) {
+            $gVolumeQuery = $gBooks->newVolumeQuery();
+        } else {
+            $bookshelfUri = 'http://books.google.com/books/feeds/users/me/collections/' . $bookshelfVolumeId . '/volumes';
+            $gVolumeQuery = $gBooks->newVolumeQuery( $bookshelfUri );
+        }
+        $gVolumeQuery->setQuery( $gdataQueryString );
+        $gVolumeQuery->setMaxResults( 1 );
+        $gFeed = $gBooks->getVolumeFeed( $gVolumeQuery );
+        $this->_setLastRequestTime( time() );
+
+        // If don't find any matches, then we're all done here
+        if ( $gFeed->count() < 1 ) {
+            $errorMessage = 'No matching google books found';
+            $errorMessage .= "\n" . 'Using: ' . $gdataQueryString;
+            throw new Exception_BookNotFound( $errorMessage );
+        }
+
+        // Assume the first match is the most correct
+        $gFeed->rewind();
+        $firstFeedEntry = $gFeed->current();
+
+        return $firstFeedEntry;
+    }
+
+
     /**
      * @param string
      * @param string
      * @return string
      */
-    private function _createGoogleBookSearchQuery( $title, $author = '' )
+    private function _createGoogleBookSearchQuery( $title, $author )
     {
         $title = preg_replace( '/\s+/', ' ', trim( $title ) );
         $title = preg_replace( '/[(][^)]+[)]/', '', $title );
@@ -382,6 +360,32 @@ final class GoogleBooks_Browser
 
         return $totalQuery;
     }
+
+
+    /**
+     * @param Zend_Gdata_Books_VolumeEntry
+     * @return string
+     */
+    private function _createExactGoogleBookSearchQuery( Zend_Gdata_Books_VolumeEntry $bookVolumeEntry )
+    {
+        $titleQuery = '';
+        foreach ( $bookVolumeEntry->getTitles() as $bookVolumeTitle ) {
+            $titleQuery .= ' intitle:"' . $bookVolumeTitle->getText() . '"';
+        }
+        $titleQuery = trim( $titleQuery );
+
+        $authorQuery = '';
+        foreach ( $bookVolumeEntry->getCreators() as $bookVolumeCreator ) {
+            $authorQuery .= ' inauthor:"' . $bookVolumeCreator->getText() . '"';
+        }
+        $authorQuery = trim( $authorQuery );
+
+        $totalQuery = trim( $titleQuery . ' ' . $authorQuery );
+        $totalQuery = str_replace( ' ', '+', $totalQuery );
+
+        return $totalQuery;
+    }
+
 
 
     /**
