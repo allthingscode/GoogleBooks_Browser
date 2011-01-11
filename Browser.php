@@ -323,7 +323,7 @@ final class GoogleBooks_Browser
         // If don't find any matches, then we're all done here
         if ( $gFeed->count() < 1 ) {
             $errorMessage = 'No matching google books found';
-            $errorMessage .= "\n" . 'Using: ' . $gdataQueryString;
+            //$errorMessage .= "\n" . 'Using: ' . $gdataQueryString;
             throw new Exception_BookNotFound( $errorMessage );
         }
 
